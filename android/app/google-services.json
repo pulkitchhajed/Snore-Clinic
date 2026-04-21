@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "840529050371",
+    "project_id": "snoreclinics-ai",
+    "storage_bucket": "snoreclinics-ai.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:840529050371:android:0f29726ad41e9c51b84736",
+        "android_client_info": {
+          "package_name": "com.snoreclinics.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBpXHSGiU4mObeVgNkVZEuxLm1Qrvyyuj0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
