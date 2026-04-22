@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:just_audio/just_audio.dart';
 
 import '../providers/sleep_analysis_provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -35,6 +36,18 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
   double _wakeUpProgress = 0.0;
   Timer? _wakeUpTimer;
   bool _isStopping = false;
+
+  final AudioPlayer _soundsPlayer = AudioPlayer();
+  final AudioPlayer _alarmPlayer = AudioPlayer();
+  TimeOfDay? _alarmTime;
+  String? _activeSoundName;
+  bool _isAlarmRinging = false;
+  
+  final List<Map<String, String>> _sleepSounds = [
+    {'name': 'White Noise', 'url': 'https://upload.wikimedia.org/wikipedia/commons/d/d9/White_noise.ogg'},
+    {'name': 'Heavy Rain', 'url': 'https://upload.wikimedia.org/wikipedia/commons/1/15/Rain_on_a_tin_roof.ogg'},
+    {'name': 'Ocean Waves', 'url': 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Ocean_waves.ogg'},
+  ];
 
   @override
   void initState() {
@@ -174,6 +187,8 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
     _timer?.cancel();
     _wakeUpTimer?.cancel();
     _recorder.dispose();
+    _soundsPlayer.dispose();
+    _alarmPlayer.dispose();
     super.dispose();
   }
 
@@ -254,6 +269,7 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
       provider.updateRecordingDuration(
         provider.recordingDuration + const Duration(seconds: 1),
       );
+      _checkAlarm();
     });
   }
 
@@ -261,6 +277,9 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
     _timer?.cancel();
     _rippleController.stop();
     _rippleController.reset();
+    _soundsPlayer.stop();
+    _alarmPlayer.stop();
+    _isAlarmRinging = false;
 
     final stoppedPath = await _recorder.stop();
 
@@ -554,10 +573,11 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.alarm_rounded, color: AppTheme.textPrimary),
-                    onPressed: () {
-                      _showError("Alarm feature coming soon!");
-                    },
+                    icon: Icon(
+                      _alarmTime == null ? Icons.alarm_rounded : Icons.alarm_on_rounded, 
+                      color: _alarmTime == null ? AppTheme.textPrimary : AppTheme.accentTeal,
+                    ),
+                    onPressed: _showAlarmSheet,
                   ),
                   Row(
                     children: [
@@ -567,10 +587,11 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.music_note_rounded, color: AppTheme.textPrimary),
-                    onPressed: () {
-                      _showError("Sleep sounds coming soon!");
-                    },
+                    icon: Icon(
+                      Icons.music_note_rounded, 
+                      color: _activeSoundName == null ? AppTheme.textPrimary : AppTheme.accentTeal,
+                    ),
+                    onPressed: _showSoundsSheet,
                   ),
                 ],
               ),
@@ -996,6 +1017,161 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
           ),
         )),
       ],
+    );
+  }
+  // ── Audio Feature Modals ──────────────────────────────────────────
+
+  void _checkAlarm() {
+    if (_alarmTime == null || _isAlarmRinging) return;
+    final now = TimeOfDay.now();
+    if (now.hour == _alarmTime!.hour && now.minute == _alarmTime!.minute) {
+      _triggerAlarm();
+    }
+  }
+
+  void _triggerAlarm() async {
+    setState(() => _isAlarmRinging = true);
+    try {
+      await _alarmPlayer.setUrl('https://upload.wikimedia.org/wikipedia/commons/4/4b/Bicycle_bell_1.ogg');
+      _alarmPlayer.setVolume(1.0);
+      _alarmPlayer.setLoopMode(LoopMode.one);
+      _alarmPlayer.play();
+    } catch (e) {
+      debugPrint('Alarm error: $e');
+    }
+    
+    if (mounted) {
+      showGeneralDialog(
+        context: context,
+        barrierDismissible: false,
+        pageBuilder: (context, anim1, anim2) {
+          return Scaffold(
+            backgroundColor: AppTheme.primaryIndigo.withValues(alpha: 0.95),
+            body: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('⏰', style: TextStyle(fontSize: 80)),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Good Morning!',
+                    style: Theme.of(context).textTheme.displayLarge?.copyWith(color: Colors.white),
+                  ),
+                  const SizedBox(height: 48),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.accentTeal,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                    ),
+                    onPressed: () {
+                      _alarmPlayer.stop();
+                      setState(() {
+                         _isAlarmRinging = false;
+                         _alarmTime = null;
+                      });
+                      Navigator.pop(context); // dismiss dialog
+                      // Stop recording and analyze
+                      final provider = Provider.of<SleepAnalysisProvider>(context, listen: false);
+                      _stopAndAnalyse(provider);
+                    },
+                    child: const Text('Wake Up & Analyze Sleep', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+      );
+    }
+  }
+
+  void _showAlarmSheet() async {
+    final time = await showTimePicker(
+      context: context,
+      initialTime: _alarmTime ?? TimeOfDay.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.dark(
+              primary: AppTheme.accentTeal,
+              surface: AppTheme.surfaceElevated,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (time != null && mounted) {
+      setState(() => _alarmTime = time);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Smart Alarm set for ${time.format(context)}'),
+        backgroundColor: AppTheme.success,
+      ));
+    }
+  }
+
+  void _showSoundsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => Container(
+          padding: const EdgeInsets.all(24),
+          decoration: const BoxDecoration(
+            color: AppTheme.surfaceElevated,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(32)),
+            boxShadow: [BoxShadow(color: Colors.black54, blurRadius: 20)],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: AppTheme.cardBorder, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 24),
+              Text('Sleep Sounds', style: Theme.of(context).textTheme.headlineMedium),
+              const SizedBox(height: 16),
+              ..._sleepSounds.map((snd) {
+                final isPlaying = _activeSoundName == snd['name'];
+                return ListTile(
+                  title: Text(snd['name']!, style: const TextStyle(color: AppTheme.textPrimary)),
+                  trailing: isPlaying ? const Icon(Icons.stop_circle, color: AppTheme.accentTeal) : const Icon(Icons.play_circle_outline, color: AppTheme.textSecondary),
+                  onTap: () async {
+                    if (isPlaying) {
+                      await _soundsPlayer.stop();
+                      setState(() => _activeSoundName = null);
+                      setSheetState(() => _activeSoundName = null);
+                    } else {
+                      setState(() => _activeSoundName = snd['name']);
+                      setSheetState(() => _activeSoundName = snd['name']);
+                      try {
+                        await _soundsPlayer.setUrl(snd['url']!);
+                        _soundsPlayer.setLoopMode(LoopMode.one); // loop infinitely
+                        _soundsPlayer.setVolume(1.0);
+                        _soundsPlayer.play();
+                      } catch (e) {
+                         debugPrint('Sound error: $e');
+                      }
+                    }
+                  },
+                );
+              }),
+              const SizedBox(height: 24),
+              if (_activeSoundName != null)
+                TextButton.icon(
+                  onPressed: () async {
+                    await _soundsPlayer.stop();
+                    setState(() => _activeSoundName = null);
+                    setSheetState(() => _activeSoundName = null);
+                    if (mounted) Navigator.pop(context);
+                  },
+                  icon: const Icon(Icons.stop, color: AppTheme.error),
+                  label: const Text('Turn Off Sound', style: TextStyle(color: AppTheme.error)),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
