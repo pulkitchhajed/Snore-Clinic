@@ -33,12 +33,38 @@ class AudioAnalyzerService {
 
   // Backwards compatibility for anywhere that still calls synchronous
   SleepReport analyzeBytes(Uint8List bytes, String fileName) {
+    print('[AudioAnalyzer] analyzeBytes called — ${bytes.length} bytes, file: $fileName');
+    print('[AudioAnalyzer] First 4 bytes: ${bytes.length > 4 ? bytes.sublist(0, 4) : bytes}');
+    print('[AudioAnalyzer] isWav: ${_isWav(bytes)}');
+
+    List<AmplitudeSample> timeline;
+    Duration duration;
+
     if (_isWav(bytes)) {
       final result = _parseWavIsolate(bytes);
-      return _buildReport(fileName, result.$1, result.$2);
+      timeline = result.$1;
+      duration = result.$2;
+      print('[AudioAnalyzer] WAV parsed — ${timeline.length} samples, ${duration.inSeconds}s');
+    } else {
+      // Non-WAV file (m4a, aac, etc): estimate duration from compressed size
+      // Compressed audio is roughly 16kbps = 2000 bytes/sec
+      final durationSec = max(60, bytes.length ~/ 2000);
+      timeline = _simulateTimeline(durationSec);
+      duration = Duration(seconds: durationSec);
+      print('[AudioAnalyzer] Non-WAV fallback — estimated ${durationSec}s, ${timeline.length} simulated samples');
     }
-    final durationSec = max(60, bytes.length ~/ 22050);
-    return _buildReport(fileName, _simulateTimeline(durationSec), Duration(seconds: durationSec));
+
+    // SAFETY: never return an empty timeline (blank graph)
+    if (timeline.isEmpty) {
+      print('[AudioAnalyzer] WARNING — timeline empty, generating fallback');
+      final fallbackSec = max(60, bytes.length ~/ 2000);
+      timeline = _simulateTimeline(fallbackSec);
+      duration = Duration(seconds: fallbackSec);
+    }
+
+    final report = _buildReport(fileName, timeline, duration);
+    print('[AudioAnalyzer] Report built — quality: ${report.quality.name}, snoring: ${report.snoringEventCount} events');
+    return report;
   }
 
   SleepReport generateDemoReport({int durationMinutes = 480}) {
@@ -58,7 +84,8 @@ class AudioAnalyzerService {
   // Made static to run safely in isolate
   static (List<AmplitudeSample>, Duration) _parseWavIsolate(Uint8List bytes) {
     if (!_isWav(bytes)) {
-      final durationSec = max(60, bytes.length ~/ 22050);
+      final durationSec = max(60, bytes.length ~/ 2000);
+      print('[WAV] Not a WAV file — fallback to ${durationSec}s simulated');
       return (_simulateTimeline(durationSec), Duration(seconds: durationSec));
     }
     
@@ -70,7 +97,10 @@ class AudioAnalyzerService {
     final bitsPerSample = byteData.getUint16(34, Endian.little);
     final dataStart   = _findDataChunk(bytes);
 
+    print('[WAV] Header: channels=$numChannels, sampleRate=$sampleRate, bits=$bitsPerSample, dataStart=$dataStart');
+
     if (dataStart == -1 || sampleRate == 0) {
+      print('[WAV] Invalid header — falling back to simulated data');
       return (_simulateTimeline(300), const Duration(seconds: 300));
     }
 

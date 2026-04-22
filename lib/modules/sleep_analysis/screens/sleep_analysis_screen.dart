@@ -8,6 +8,7 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 import '../providers/sleep_analysis_provider.dart';
 import '../../../core/theme/app_theme.dart';
@@ -207,6 +208,35 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
       path = '${dir.path}/sleep_${DateTime.now().millisecondsSinceEpoch}.wav';
     }
 
+    // ── Start foreground service to keep recording alive overnight ──
+    if (!kIsWeb) {
+      FlutterForegroundTask.init(
+        androidNotificationOptions: AndroidNotificationOptions(
+          channelId: 'sleep_recording',
+          channelName: 'Sleep Recording',
+          channelDescription: 'Keeps the app running while recording your sleep.',
+          channelImportance: NotificationChannelImportance.LOW,
+          priority: NotificationPriority.LOW,
+        ),
+        iosNotificationOptions: const IOSNotificationOptions(
+          showNotification: true,
+          playSound: false,
+        ),
+        foregroundTaskOptions: ForegroundTaskOptions(
+          autoRunOnBoot: false,
+          autoRunOnMyPackageReplaced: false,
+          allowWakeLock: true,
+          allowWifiLock: false,
+          eventAction: ForegroundTaskEventAction.nothing(),
+        ),
+      );
+      await FlutterForegroundTask.startService(
+        notificationTitle: 'Recording Sleep...',
+        notificationText: 'SnoreClinics AI is listening for snoring.',
+      );
+      debugPrint('[Recording] Foreground service started');
+    }
+
     await _recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.wav,
@@ -233,6 +263,12 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
     _rippleController.reset();
 
     final stoppedPath = await _recorder.stop();
+
+    // ── Stop foreground service ──
+    if (!kIsWeb) {
+      await FlutterForegroundTask.stopService();
+      debugPrint('[Recording] Foreground service stopped');
+    }
 
     // Mark recording done AFTER we have the path
     provider.setRecordingActive(false);

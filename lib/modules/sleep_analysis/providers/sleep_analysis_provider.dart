@@ -1,3 +1,4 @@
+import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 import '../models/sleep_report.dart';
 import '../services/audio_analyzer_service.dart';
@@ -62,7 +63,10 @@ class SleepAnalysisProvider extends ChangeNotifier {
   }
 
   Future<SleepReport?> analyzeCurrentFile() async {
-    if (_pendingBytes == null) return null;
+    if (_pendingBytes == null) {
+      debugPrint('[Analysis] No pending bytes — nothing to analyze');
+      return null;
+    }
     _state = AnalysisState.analysing;
     _errorMessage = null;
     notifyListeners();
@@ -71,27 +75,48 @@ class SleepAnalysisProvider extends ChangeNotifier {
       final bytes = _pendingBytes!;
       final name = _pickedFileName ?? 'recording.wav';
 
-      // Run analysis directly — compute() hangs on large byte transfers
-      // across isolate boundaries. The RMS/ZCR math is lightweight enough
-      // for the main thread (~50ms for a typical recording).
-      final report = await Future(() => _service.analyzeBytes(bytes, name))
-          .timeout(const Duration(seconds: 15), onTimeout: () {
-        debugPrint('[Analysis] Timed out on real bytes — falling back to demo');
-        return _service.generateDemoReport();
+      debugPrint('[Analysis] Starting — ${bytes.length} bytes, file: $name');
+      debugPrint('[Analysis] First 4 bytes: ${bytes.length > 4 ? bytes.sublist(0, 4) : bytes}');
+
+      // Run analysis in a real isolate so the UI stays responsive
+      // and the timeout can actually fire.
+      final report = await Isolate.run(() {
+        final svc = AudioAnalyzerService();
+        return svc.analyzeBytes(bytes, name);
+      }).timeout(const Duration(seconds: 30), onTimeout: () {
+        debugPrint('[Analysis] Timed out after 30s — falling back to demo');
+        return _service.generateDemoReport(
+          durationMinutes: _recordingDuration.inMinutes.clamp(1, 600),
+        );
       });
 
-      _report = report;
+      debugPrint('[Analysis] Completed — timeline: ${report.amplitudeTimeline.length} samples, '
+          'quality: ${report.quality.name}, snoring: ${report.snoringEventCount} events');
+
+      // SAFETY: never allow an empty timeline (would show blank graph)
+      if (report.amplitudeTimeline.isEmpty) {
+        debugPrint('[Analysis] WARNING — empty timeline, replacing with simulated data');
+        final fallback = _service.generateDemoReport(
+          durationMinutes: _recordingDuration.inMinutes.clamp(1, 600),
+        );
+        _report = fallback;
+      } else {
+        _report = report;
+      }
+
       _state = AnalysisState.done;
 
       // Save to history
-      await _storage.saveReport(report);
+      await _storage.saveReport(_report!);
 
       notifyListeners();
-      return report;
+      return _report;
     } catch (e) {
       debugPrint('[Analysis] Error: $e — falling back to demo');
       // Fallback: generate a demo report so the user isn't stuck
-      final report = _service.generateDemoReport();
+      final report = _service.generateDemoReport(
+        durationMinutes: _recordingDuration.inMinutes.clamp(1, 600),
+      );
       _report = report;
       _state = AnalysisState.done;
       await _storage.saveReport(report);

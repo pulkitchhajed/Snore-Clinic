@@ -35,6 +35,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1
 
   # Overnight background execution
+  flutter_foreground_task: ^8.0.0
 
   # Gemini AI
   google_generative_ai: ^0.4.6
