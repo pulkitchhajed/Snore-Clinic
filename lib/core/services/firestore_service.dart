@@ -179,11 +179,24 @@ class FirestoreService {
     }
   }
 
-  /// Deletes a single sleep report by timestamp.
+  /// Deletes all sleep reports matching a specific timestamp.
+  /// Uses both ID-based deletion and Query-based cleanup for ghost duplicates.
   static Future<void> deleteReport(DateTime recordedAt) async {
     try {
       final col = await _sleepReportsCol();
-      await col.doc(recordedAt.millisecondsSinceEpoch.toString()).delete();
+      
+      // 1. Try fast deletion by ID (the modern way)
+      final docId = recordedAt.millisecondsSinceEpoch.toString();
+      await col.doc(docId).delete();
+
+      // 2. Query for ANY duplicates matching that exact time (ghost cleanup)
+      final snapshots = await col
+          .where('recordedAt', isEqualTo: Timestamp.fromDate(recordedAt))
+          .get();
+
+      for (final doc in snapshots.docs) {
+        await doc.reference.delete();
+      }
     } catch (e) {
       debugPrint('[Firestore] deleteReport error: $e');
     }
