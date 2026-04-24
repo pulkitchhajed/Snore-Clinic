@@ -214,6 +214,13 @@ class _SleepAnalysisScreenState extends State<SleepAnalysisScreen>
       return;
     }
 
+    if (!kIsWeb) {
+      final isIgnoring = await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+      if (!isIgnoring) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    }
+
     String path;
     if (kIsWeb) {
       // On web, record package uses a temp path

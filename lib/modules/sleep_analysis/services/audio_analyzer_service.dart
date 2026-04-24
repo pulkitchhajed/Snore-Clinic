@@ -258,9 +258,11 @@ class AudioAnalyzerService {
     bool   inEvent     = false;
     int    eventStartIdx = 0;
     double peakAmp     = 0;
+    double peakTimelineAmp = 0;
 
     for (int i = 0; i < timeline.length; i++) {
       final s = timeline[i];
+      peakTimelineAmp = max(peakTimelineAmp, s.amplitude);
       if (s.isSnoring) {
         if (!inEvent) {
           inEvent = true; eventStartIdx = i; peakAmp = s.amplitude;
@@ -340,7 +342,7 @@ class AudioAnalyzerService {
       quality: quality,
       snoringEvents: events,
       amplitudeTimeline: timeline,
-      insights: _generateInsights(quality, snoringPct, events.length),
+      insights: _generateInsights(quality, snoringPct, events.length, peakTimelineAmp, totalDuration),
       sleepDebtHours: double.parse(debtHours.toStringAsFixed(1)),
       lightSleepPercent: light,
       deepSleepPercent: deep,
@@ -349,10 +351,13 @@ class AudioAnalyzerService {
     );
   }
 
-  List<SleepInsight> _generateInsights(SleepQuality quality, double snoringPct, int eventCount) {
+  List<SleepInsight> _generateInsights(SleepQuality quality, double snoringPct, int eventCount, double peakTimelineAmp, Duration totalDuration) {
     final insights = <SleepInsight>[];
 
-    if (snoringPct > 0.5) {
+    if (totalDuration.inMinutes >= 10 && peakTimelineAmp == 0.0) {
+      insights.add(const SleepInsight(title: 'OS Microphone Muted', emoji: '🔕',
+        description: 'Your Android device suspended the microphone to save battery. On your next recording, please Allow the battery optimization waiver, or go to Settings > Apps > SnoreClinics AI and set Battery to "Unrestricted".'));
+    } else if (snoringPct > 0.5) {
       insights.add(const SleepInsight(title: 'High Snoring Detected', emoji: '⚠️',
         description: 'You snored for more than 50% of the recording. Consider sleeping on your side and consulting a physician about sleep apnea.'));
     } else if (snoringPct > 0.15) {
